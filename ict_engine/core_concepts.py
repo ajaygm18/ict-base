@@ -9,8 +9,11 @@ from datetime import datetime, timedelta
 import logging
 from dataclasses import dataclass
 from enum import Enum
+import time
 
-logger = logging.getLogger(__name__)
+from monitoring.logging import logger, performance_monitor
+from config.settings import settings
+from .helpers import ICTAnalysisHelpers
 
 class MarketStructure(Enum):
     HIGHER_HIGH = "HH"
@@ -57,39 +60,121 @@ class FairValueGap:
     mitigation_level: float
     is_mitigated: bool = False
 
-class StockMarketStructureAnalyzer:
-    def __init__(self):
+class StockMarketStructureAnalyzer(ICTAnalysisHelpers):
+    """Enhanced market structure analyzer with production-ready ICT concepts"""
+    
+    def __init__(self, symbol: str = ""):
+        self.symbol = symbol
         self.swing_lookback = 5  # Periods to look back for swing identification
         self.liquidity_threshold = 0.001  # 0.1% for equal levels
         self.min_volume_ratio = 1.5  # Minimum volume ratio for significance
+        self.performance_cache = {}
+        
+    def analyze_market_structure(self, stock_data: pd.DataFrame) -> Dict:
+        """Comprehensive market structure analysis"""
+        start_time = time.time()
+        
+        try:
+            if stock_data.empty or len(stock_data) < 20:
+                return {'error': 'Insufficient data for analysis'}
+            
+            # Standardize column names
+            stock_data = self._standardize_columns(stock_data)
+            
+            # Core ICT concepts analysis
+            concepts_analysis = {
+                'concept_1': self.concept_1_market_structure_hh_hl_lh_ll(stock_data),
+                'concept_2': self.concept_2_liquidity_buyside_sellside(stock_data),
+                'concept_3': self.concept_3_liquidity_pools(stock_data),
+                'concept_4': self.concept_4_order_blocks(stock_data),
+                'concept_5': self.concept_5_breaker_blocks(stock_data),
+                'concept_6': self.concept_6_fair_value_gaps(stock_data),
+                'concept_7': self.concept_7_rejection_blocks(stock_data),
+                'concept_8': self.concept_8_mitigation_blocks(stock_data),
+                'concept_9': self.concept_9_supply_demand_zones(stock_data),
+                'concept_10': self.concept_10_premium_discount_ote(stock_data)
+            }
+            
+            # Market context
+            market_context = self._analyze_market_context(stock_data)
+            
+            # Generate trading opportunities
+            opportunities = self._identify_trading_opportunities(concepts_analysis, stock_data)
+            
+            result = {
+                'symbol': self.symbol,
+                'timestamp': datetime.now(),
+                'concepts': concepts_analysis,
+                'market_context': market_context,
+                'trading_opportunities': opportunities,
+                'analysis_quality': self._assess_analysis_quality(concepts_analysis)
+            }
+            
+            execution_time = (time.time() - start_time) * 1000
+            performance_monitor.record_execution_time("market_structure_analysis", execution_time, symbol=self.symbol)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in market structure analysis for {self.symbol}", error=str(e))
+            return {'error': str(e)}
+    
+    def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Standardize DataFrame column names"""
+        column_mapping = {
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume',
+            'OPEN': 'open', 'HIGH': 'high', 'LOW': 'low', 'CLOSE': 'close', 'VOLUME': 'volume'
+        }
+        
+        df_standardized = df.copy()
+        df_standardized.columns = [column_mapping.get(col, col.lower()) for col in df.columns]
+        
+        # Ensure required columns exist
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        for col in required_cols:
+            if col not in df_standardized.columns:
+                if col == 'volume':
+                    df_standardized[col] = 1000  # Default volume
+                else:
+                    raise ValueError(f"Required column '{col}' not found in data")
+        
+        return df_standardized
         
     def concept_1_market_structure_hh_hl_lh_ll(self, stock_data: pd.DataFrame) -> Dict:
         """
         CONCEPT 1: Market Structure (HH, HL, LH, LL)
-        - Higher Highs (HH) detection with stock-specific logic
-        - Higher Lows (HL) pattern recognition for stock trends
-        - Lower Highs (LH) identification in stock downtrends  
-        - Lower Lows (LL) pattern detection
+        Enhanced with statistical significance testing and trend strength
         """
-        if stock_data.empty or len(stock_data) < 10:
-            return {'error': 'Insufficient data for market structure analysis'}
-        
         try:
-            # Identify swing points
-            swing_highs = self._find_swing_highs(stock_data)
-            swing_lows = self._find_swing_lows(stock_data)
+            # Identify swing points with enhanced algorithm
+            swing_highs = self._find_swing_highs_enhanced(stock_data)
+            swing_lows = self._find_swing_lows_enhanced(stock_data)
             
-            # Classify market structure
-            structure_analysis = {
-                'swing_highs': swing_highs,
-                'swing_lows': swing_lows,
-                'current_structure': self._classify_current_structure(swing_highs, swing_lows),
-                'structure_breaks': self._detect_structure_breaks(swing_highs, swing_lows),
-                'trend_direction': self._determine_trend_direction(swing_highs, swing_lows),
-                'confidence': self._calculate_structure_confidence(swing_highs, swing_lows)
+            if len(swing_highs) < 2 or len(swing_lows) < 2:
+                return {'error': 'Insufficient swing points for analysis'}
+            
+            # Analyze structure patterns
+            structure_patterns = self._analyze_structure_patterns(swing_highs, swing_lows)
+            
+            # Current market state
+            current_structure = self._classify_current_structure_enhanced(swing_highs, swing_lows, stock_data)
+            
+            # Structure breaks and confirmations
+            structure_breaks = self._detect_structure_breaks_enhanced(swing_highs, swing_lows, stock_data)
+            
+            # Trend strength and momentum
+            trend_analysis = self._analyze_trend_strength(swing_highs, swing_lows, stock_data)
+            
+            return {
+                'swing_highs': [self._swing_point_to_dict(sp) for sp in swing_highs[-10:]],
+                'swing_lows': [self._swing_point_to_dict(sp) for sp in swing_lows[-10:]],
+                'structure_patterns': structure_patterns,
+                'current_structure': current_structure,
+                'structure_breaks': structure_breaks,
+                'trend_analysis': trend_analysis,
+                'market_phase': self._determine_market_phase(structure_patterns, trend_analysis),
+                'confidence_score': self._calculate_structure_confidence_enhanced(swing_highs, swing_lows, structure_patterns)
             }
-            
-            return structure_analysis
             
         except Exception as e:
             logger.error(f"Error in market structure analysis: {e}")
