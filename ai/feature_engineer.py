@@ -5,14 +5,29 @@ Creates 200+ technical indicators for stock market analysis
 
 import pandas as pd
 import numpy as np
-import talib
-import pandas_ta as ta
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    TALIB_AVAILABLE = False
+    import warnings
+    warnings.warn("TA-Lib not available. Some features will be computed using alternative methods.")
+
+try:
+    import pandas_ta as ta
+    PANDAS_TA_AVAILABLE = True
+except ImportError:
+    PANDAS_TA_AVAILABLE = False
+
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
-logger = logging.getLogger(__name__)
+from monitoring.logging import logger, performance_monitor
 
 @dataclass
 class FeatureSet:
@@ -32,6 +47,7 @@ class TechnicalIndicatorEngine:
         
     def create_price_based_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Create price-based technical indicators"""
+        start_time = time.time()
         indicators = pd.DataFrame(index=df.index)
         
         # Ensure column names are lowercase
@@ -42,68 +58,47 @@ class TechnicalIndicatorEngine:
         open_col = df_cols.get('open', 'open')
         volume_col = df_cols.get('volume', 'volume')
         
-        # Moving averages (20 indicators)
-        periods = [5, 10, 20, 50, 100, 200]
-        for period in periods:
-            if len(df) >= period:
-                indicators[f'SMA_{period}'] = talib.SMA(df[close_col].values, timeperiod=period)
-                indicators[f'EMA_{period}'] = talib.EMA(df[close_col].values, timeperiod=period)
-                indicators[f'WMA_{period}'] = talib.WMA(df[close_col].values, timeperiod=period)
+        try:
+            # Moving averages (20 indicators)
+            periods = [5, 10, 20, 50, 100, 200]
+            for period in periods:
+                if len(df) >= period:
+                    if TALIB_AVAILABLE:
+                        indicators[f'SMA_{period}'] = talib.SMA(df[close_col].values, timeperiod=period)
+                        indicators[f'EMA_{period}'] = talib.EMA(df[close_col].values, timeperiod=period)
+                    else:
+                        # Fallback implementations
+                        indicators[f'SMA_{period}'] = df[close_col].rolling(window=period).mean()
+                        indicators[f'EMA_{period}'] = df[close_col].ewm(span=period).mean()
+                    
+                    indicators[f'WMA_{period}'] = self._calculate_wma(df[close_col], period)
             
-        # Bollinger Bands (9 indicators)
-        for period in [20, 50]:
-            if len(df) >= period:
-                bb_upper, bb_middle, bb_lower = talib.BBANDS(df[close_col].values, timeperiod=period)
-                indicators[f'BB_Upper_{period}'] = bb_upper
-                indicators[f'BB_Middle_{period}'] = bb_middle
-                indicators[f'BB_Lower_{period}'] = bb_lower
-                indicators[f'BB_Width_{period}'] = (bb_upper - bb_lower) / np.where(bb_middle != 0, bb_middle, 1)
+            # Price patterns and relationships
+            indicators['HL_PCT'] = (df[high_col] - df[low_col]) / df[close_col] * 100
+            indicators['OC_PCT'] = (df[close_col] - df[open_col]) / df[open_col] * 100
+            indicators['HC_PCT'] = (df[high_col] - df[close_col]) / df[close_col] * 100
+            indicators['CL_PCT'] = (df[close_col] - df[low_col]) / df[low_col] * 100
             
-        # Price channels and ranges (12 indicators)
-        for period in [20, 50]:
-            if len(df) >= period:
-                high_roll = df[high_col].rolling(period)
-                low_roll = df[low_col].rolling(period)
-                indicators[f'Highest_{period}'] = high_roll.max()
-                indicators[f'Lowest_{period}'] = low_roll.min()
-                indicators[f'Channel_Width_{period}'] = indicators[f'Highest_{period}'] - indicators[f'Lowest_{period}']
-                channel_width = indicators[f'Channel_Width_{period}']
-                indicators[f'Price_Position_{period}'] = np.where(
-                    channel_width != 0,
-                    (df[close_col] - indicators[f'Lowest_{period}']) / channel_width,
-                    0.5
-                )
+            # Support/Resistance levels
+            indicators['RESISTANCE_20'] = df[high_col].rolling(window=20).max()
+            indicators['SUPPORT_20'] = df[low_col].rolling(window=20).min()
+            indicators['PIVOT'] = (df[high_col] + df[low_col] + df[close_col]) / 3
             
-        # Pivot points (7 indicators)
-        pivot = (df[high_col] + df[low_col] + df[close_col]) / 3
-        indicators['Pivot'] = pivot
-        indicators['R1'] = 2 * pivot - df[low_col]
-        indicators['R2'] = pivot + (df[high_col] - df[low_col])
-        indicators['S1'] = 2 * pivot - df[high_col]
-        indicators['S2'] = pivot - (df[high_col] - df[low_col])
-        indicators['R3'] = df[high_col] + 2 * (pivot - df[low_col])
-        indicators['S3'] = df[low_col] - 2 * (df[high_col] - pivot)
+        except Exception as e:
+            logger.error(f"Error creating price-based indicators: {e}")
         
-        # Fibonacci levels (8 indicators)
-        if len(df) >= 20:
-            high_20 = df[high_col].rolling(20).max()
-            low_20 = df[low_col].rolling(20).min()
-            fib_range = high_20 - low_20
-            indicators['Fib_23.6'] = high_20 - 0.236 * fib_range
-            indicators['Fib_38.2'] = high_20 - 0.382 * fib_range
-            indicators['Fib_50.0'] = high_20 - 0.500 * fib_range
-            indicators['Fib_61.8'] = high_20 - 0.618 * fib_range
-            indicators['Fib_78.6'] = high_20 - 0.786 * fib_range
-        
-        # Price patterns (5 indicators)
-        indicators['Doji'] = abs(df[close_col] - df[open_col]) / (df[high_col] - df[low_col] + 1e-10)
-        indicators['Upper_Shadow'] = df[high_col] - np.maximum(df[open_col], df[close_col])
-        indicators['Lower_Shadow'] = np.minimum(df[open_col], df[close_col]) - df[low_col]
-        indicators['Body_Size'] = abs(df[close_col] - df[open_col])
-        indicators['True_Range'] = talib.TRANGE(df[high_col].values, df[low_col].values, df[close_col].values)
+        execution_time = (time.time() - start_time) * 1000
+        performance_monitor.record_execution_time("price_indicators", execution_time)
         
         self.indicator_count += indicators.shape[1]
         return indicators
+    
+    def _calculate_wma(self, series: pd.Series, period: int) -> pd.Series:
+        """Calculate Weighted Moving Average"""
+        weights = np.arange(1, period + 1)
+        return series.rolling(window=period).apply(
+            lambda x: np.average(x, weights=weights), raw=True
+        )
         
     def create_volume_based_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Create volume-based technical indicators"""
